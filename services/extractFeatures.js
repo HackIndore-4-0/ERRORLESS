@@ -3,7 +3,24 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// IMPORTANT: the Groq SDK throws synchronously if apiKey is missing/empty.
+// Instantiating it at module load time would crash the whole server on boot
+// whenever GROQ_API_KEY isn't set yet (e.g. before it's been added in
+// Railway's Variables tab). Create it lazily on first real use instead, so
+// the server always starts — only a request that actually needs Groq fails,
+// with a clear error, until the key is set.
+let groq = null;
+
+function getGroqClient() {
+  if (groq) return groq;
+
+  if (!process.env.GROQ_API_KEY) {
+    throw new Error("GROQ_API_KEY is not set — cannot reach Groq for this request.");
+  }
+
+  groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+  return groq;
+}
 
 const SYSTEM_PROMPT = `You extract structured features from a workplace task description for a routing engine.
 Return ONLY a raw JSON object, no prose, no markdown fences, with these exact keys, each a float between 0.0 and 1.0:
@@ -30,11 +47,9 @@ Example output:
  * @returns {Promise<{c:number,k:number,e:number,s:number,r:number,t:number,tags:string[]}>}
  */
 export async function extractTaskFeatures(title, description) {
-  if (!process.env.GROQ_API_KEY) {
-    throw new Error("GROQ_API_KEY is not set — cannot extract task features.");
-  }
+  const client = getGroqClient();
 
-  const response = await groq.chat.completions.create({
+  const response = await client.chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -74,16 +89,14 @@ export async function extractTaskFeatures(title, description) {
  * two Groq calls can use different prompting strategies.
  */
 export async function generateAiOutput(title, description, mode /* 'execute' | 'draft' */) {
-  if (!process.env.GROQ_API_KEY) {
-    throw new Error("GROQ_API_KEY is not set — cannot generate AI output.");
-  }
+  const client = getGroqClient();
 
   const instruction =
     mode === "draft"
       ? "Write a DRAFT response/output for this task. Make clear it is a draft awaiting human review — do not take any irreversible action, just produce the text/content a human will review and approve."
       : "Complete this task fully and directly. Produce the final output.";
 
-  const response = await groq.chat.completions.create({
+  const response = await client.chat.completions.create({
     model: "llama-3.3-70b-versatile",
     messages: [
       { role: "system", content: instruction },
