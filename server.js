@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import employeesRouter from "./routes/employees.js";
 import tasksRouter from "./routes/tasks.js";
+import dashboardRouter from "./routes/dashboard.js";
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ app.get("/health", (req, res) => {
 
 app.use("/api/employees", employeesRouter);
 app.use("/api/tasks", tasksRouter);
+app.use("/api/dashboard", dashboardRouter);
 
 // Fallback 404
 app.use((req, res) => {

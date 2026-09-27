@@ -5,6 +5,7 @@ import { findBestEmployee } from "../scoring/assignEmployee.js";
 import { extractTaskFeatures, generateAiOutput } from "../services/extractFeatures.js";
 import { notifyAssignee } from "../services/notifyAssignee.js";
 import { logAudit } from "../services/auditLog.js";
+import { getHnBaseline, evaluateRework } from "../services/reworkTracker.js";
 
 const router = express.Router();
 
@@ -24,8 +25,14 @@ router.post("/intake", async (req, res) => {
     // 1. Extract features + tags via Groq
     const { tags, ...metrics } = await extractTaskFeatures(title, description);
 
-    // 2. Score + gate + route
-    const decision = scoreAndRouteTask(metrics, tags);
+    // 1a. Derive task_type (used to look up / update the learned HN baseline
+    // — see services/reworkTracker.js) and fetch its current baseline.
+    const taskType = tags?.[0] || required_role || "general";
+    const hnBaseline = await getHnBaseline(taskType);
+
+    // 2. Score + gate + route (baseline floors HN if this type has a
+    // history of hidden rework)
+    const decision = scoreAndRouteTask(metrics, tags, hnBaseline);
 
     // 2a. G4 refusal — do not create a task record, just log and return.
     if (decision.route === "refused") {
@@ -77,6 +84,7 @@ router.post("/intake", async (req, res) => {
           title,
           description,
           required_role: required_role || null,
+          task_type: taskType,
           metrics: { ...metrics, tags },
           route: decision.route,
           aa_score: decision.scores.AA,
@@ -188,7 +196,25 @@ router.patch("/:id/approve", async (req, res) => {
       return res.status(409).json({ error: `Task is not awaiting approval (status: ${task.status}).` });
     }
 
-    // 1. Record the approval decision
+    // 1. Compute rework/drift telemetry BEFORE inserting the approval row,
+    // so drift_ratio and is_hidden_rework can be stored in the same insert
+    // (only meaningful for 'edited', where we have both the AI draft and
+    // the human's final text to compare).
+    let driftRatio = null;
+    let isHiddenRework = false;
+
+    if (decision === "edited" && final_output) {
+      const reworkResult = await evaluateRework({
+        taskId: id,
+        taskType: task.task_type,
+        aiOutput: task.ai_output,
+        finalOutput: final_output,
+      });
+      driftRatio = reworkResult.driftRatio;
+      isHiddenRework = reworkResult.isHiddenRework;
+    }
+
+    // 2. Record the approval decision
     const { data: approval, error: apprErr } = await supabase
       .from("approvals")
       .insert([
@@ -198,6 +224,8 @@ router.patch("/:id/approve", async (req, res) => {
           decision,
           note: note || null,
           final_output: decision === "edited" ? final_output || null : null,
+          drift_ratio: driftRatio,
+          is_hidden_rework: isHiddenRework,
         },
       ])
       .select()
@@ -205,7 +233,7 @@ router.patch("/:id/approve", async (req, res) => {
 
     if (apprErr) throw apprErr;
 
-    // 2. Update task status
+    // 3. Update task status
     const newStatus = decision === "rejected" ? "rejected" : "completed";
     const outputToStore =
       decision === "edited" && final_output ? final_output : task.ai_output;
@@ -227,7 +255,7 @@ router.patch("/:id/approve", async (req, res) => {
       after: { status: newStatus, decision, note },
     });
 
-    res.json({ success: true, task: updatedTask, approval });
+    res.json({ success: true, task: updatedTask, approval, rework: { driftRatio, isHiddenRework } });
   } catch (err) {
     console.error("[tasks/:id/approve] error:", err);
     res.status(500).json({ error: err.message });
