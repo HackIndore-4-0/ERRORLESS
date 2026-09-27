@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # HUMAI Backend
 
 AI/human task allocation engine — Node.js/Express + Supabase + Groq.
@@ -20,3 +21,6 @@ npm run dev
 5. Railway assigns a public URL once deployed — check it with `GET /health`.
 6. Once your Vercel frontend has its own URL, update `APP_URL` here so
    assignment emails link to the right place.
+=======
+# ERRORLESS  
+>>>>>>> 113a47760bd00a94df1afad4ceb6b0b563a0b6c8
