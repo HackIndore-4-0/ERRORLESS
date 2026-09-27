@@ -6,17 +6,24 @@ import { extractTaskFeatures, generateAiOutput } from "../services/extractFeatur
 import { notifyAssignee } from "../services/notifyAssignee.js";
 import { logAudit } from "../services/auditLog.js";
 import { getHnBaseline, evaluateRework } from "../services/reworkTracker.js";
+import { deriveSlaMinutes, computeSlaDeadline, computeSlaStatus } from "../services/slaTracker.js";
 
 const router = express.Router();
 
 const LOAD_INCREMENT = 0.1; // rough per-task load bump when a human/hybrid task is assigned
+
+// Attaches the live SLA "work status window" to a task row for API responses.
+function withSlaStatus(task) {
+  if (!task) return task;
+  return { ...task, sla_status: computeSlaStatus(task) };
+}
 
 // -----------------------------------------------------------------------
 // POST /api/tasks/intake
 // -----------------------------------------------------------------------
 router.post("/intake", async (req, res) => {
   try {
-    const { title, description, required_role } = req.body;
+    const { title, description, required_role, sla_minutes: slaOverride } = req.body;
 
     if (!description) {
       return res.status(400).json({ error: "description is required." });
@@ -76,6 +83,19 @@ router.post("/intake", async (req, res) => {
         ? "completed"
         : "pending_approval"; // human or hybrid both wait on the approval endpoint
 
+    // 5a. SLA fields — only meaningful once there's a human assignee to hold
+    // to a clock. Challenge 2: Dynamic SLA-Breach Cascade Rebalancing.
+    const now = new Date();
+    let slaFields = { assigned_at: null, sla_minutes: null, sla_deadline: null };
+    if (assignedEmployee) {
+      const slaMinutes = deriveSlaMinutes(metrics, slaOverride);
+      slaFields = {
+        assigned_at: now.toISOString(),
+        sla_minutes: slaMinutes,
+        sla_deadline: computeSlaDeadline(now, slaMinutes).toISOString(),
+      };
+    }
+
     // 6. Persist task
     const { data: newTask, error: dbError } = await supabase
       .from("tasks")
@@ -94,6 +114,7 @@ router.post("/intake", async (req, res) => {
           assigned_employee_id: assignedEmployee?.id || null,
           status,
           ai_output: aiOutput,
+          ...slaFields,
         },
       ])
       .select()
@@ -124,7 +145,7 @@ router.post("/intake", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      task: newTask,
+      task: withSlaStatus(newTask),
       decision,
       assigned_to: assignedEmployee,
       assignment_fallback: assignmentFallback,
@@ -152,7 +173,7 @@ router.get("/", async (req, res) => {
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ success: true, tasks: data });
+  res.json({ success: true, tasks: (data || []).map(withSlaStatus) });
 });
 
 // -----------------------------------------------------------------------
@@ -166,7 +187,88 @@ router.get("/:id", async (req, res) => {
     .single();
 
   if (error) return res.status(404).json({ error: "Task not found." });
-  res.json({ success: true, task: data });
+  res.json({ success: true, task: withSlaStatus(data) });
+});
+
+// -----------------------------------------------------------------------
+// PATCH /api/tasks/:id/claim
+// Employee claims a task, stopping the SLA cascade clock. Body: { employee_id }
+// (only used to sanity-check the claimant is the assignee; not a real auth check).
+// -----------------------------------------------------------------------
+router.patch("/:id/claim", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { employee_id } = req.body;
+
+    const { data: task, error: taskErr } = await supabase.from("tasks").select("*").eq("id", id).single();
+    if (taskErr || !task) return res.status(404).json({ error: "Task not found." });
+
+    if (!["pending_approval", "in_progress"].includes(task.status)) {
+      return res.status(409).json({ error: `Task cannot be claimed in status "${task.status}".` });
+    }
+    if (employee_id && task.assigned_employee_id && employee_id !== task.assigned_employee_id) {
+      return res.status(403).json({ error: "This task is assigned to a different employee." });
+    }
+    if (task.claimed_at) {
+      return res.status(409).json({ error: "Task has already been claimed." });
+    }
+
+    const now = new Date().toISOString();
+    const { data: updatedTask, error: updateErr } = await supabase
+      .from("tasks")
+      .update({ claimed_at: now, status: "in_progress", updated_at: now })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    await logAudit({
+      actor: employee_id || task.assigned_employee_id || "employee",
+      action: "task_claimed",
+      entity: `task:${id}`,
+      before: { status: task.status, claimed_at: null },
+      after: { status: "in_progress", claimed_at: now },
+    });
+
+    res.json({ success: true, task: withSlaStatus(updatedTask) });
+  } catch (err) {
+    console.error("[tasks/:id/claim] error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// PATCH /api/tasks/:id/progress
+// A lightweight heartbeat: "still working on it." Also exempts the task
+// from the SLA cascade, same as claiming, without changing its status.
+// -----------------------------------------------------------------------
+router.patch("/:id/progress", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: task, error: taskErr } = await supabase.from("tasks").select("*").eq("id", id).single();
+    if (taskErr || !task) return res.status(404).json({ error: "Task not found." });
+
+    if (!["pending_approval", "in_progress"].includes(task.status)) {
+      return res.status(409).json({ error: `Task cannot be progressed in status "${task.status}".` });
+    }
+
+    const now = new Date().toISOString();
+    const { data: updatedTask, error: updateErr } = await supabase
+      .from("tasks")
+      .update({ last_progress_at: now, updated_at: now })
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    res.json({ success: true, task: withSlaStatus(updatedTask) });
+  } catch (err) {
+    console.error("[tasks/:id/progress] error:", err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // -----------------------------------------------------------------------
@@ -192,7 +294,7 @@ router.patch("/:id/approve", async (req, res) => {
 
     if (taskErr || !task) return res.status(404).json({ error: "Task not found." });
 
-    if (task.status !== "pending_approval") {
+    if (!["pending_approval", "in_progress"].includes(task.status)) {
       return res.status(409).json({ error: `Task is not awaiting approval (status: ${task.status}).` });
     }
 
@@ -255,7 +357,7 @@ router.patch("/:id/approve", async (req, res) => {
       after: { status: newStatus, decision, note },
     });
 
-    res.json({ success: true, task: updatedTask, approval, rework: { driftRatio, isHiddenRework } });
+    res.json({ success: true, task: withSlaStatus(updatedTask), approval, rework: { driftRatio, isHiddenRework } });
   } catch (err) {
     console.error("[tasks/:id/approve] error:", err);
     res.status(500).json({ error: err.message });

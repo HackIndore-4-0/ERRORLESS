@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import employeesRouter from "./routes/employees.js";
 import tasksRouter from "./routes/tasks.js";
 import dashboardRouter from "./routes/dashboard.js";
+import { startSlaMonitor } from "./services/slaMonitor.js";
 
 dotenv.config();
 
@@ -27,4 +28,11 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`HUMAI backend listening on port ${PORT}`);
+
+  // Challenge 2: Dynamic SLA-Breach Cascade Rebalancing — background
+  // worker that reroutes stale human/hybrid tasks. Disable with
+  // SLA_MONITOR_ENABLED=false (e.g. in tests).
+  if (process.env.SLA_MONITOR_ENABLED !== "false") {
+    startSlaMonitor({ intervalMs: Number(process.env.SLA_POLL_INTERVAL_MS) || 30_000 });
+  }
 });

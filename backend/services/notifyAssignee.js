@@ -70,3 +70,45 @@ export async function notifyAssignee(employee, task, appUrl = process.env.APP_UR
     return { sent: false, reason: "send_failed", error: err.message };
   }
 }
+
+/**
+ * Emails a manager (MANAGER_EMAIL env var) when the SLA cascade can't find
+ * anyone under the load ceiling to hand a stale task to — i.e. the whole
+ * qualified team is saturated. Never throws, same as notifyAssignee.
+ *
+ * @param {{id:string, title:string, required_role:string, reassignment_count:number}} task
+ */
+export async function notifyManagerEscalation(task, reason) {
+  const managerEmail = process.env.MANAGER_EMAIL;
+  if (!managerEmail) {
+    console.warn(`[notifyManagerEscalation] MANAGER_EMAIL not set — skipping alert for task ${task.id}`);
+    return { sent: false, reason: "not_configured" };
+  }
+
+  const t = getTransporter();
+  if (!t) return { sent: false, reason: "not_configured" };
+
+  const subject = `HUMAI ALERT: SLA breach, no capacity — "${task.title || "Untitled task"}"`;
+  const text = [
+    `A task has breached its SLA and every qualified employee is at/above the ${Math.round(
+      (task.load_ceiling ?? 0.85) * 100
+    )}% load ceiling, so it could not be auto-reassigned.`,
+    ``,
+    `Task: ${task.title || "Untitled task"} (id: ${task.id})`,
+    `Required role: ${task.required_role || "(any)"}`,
+    `Reassignment attempts so far: ${task.reassignment_count ?? 0}`,
+    `Reason: ${reason}`,
+    ``,
+    `This needs a manager's eyes — either free up capacity or intervene manually.`,
+    ``,
+    `— HUMAI`,
+  ].join("\n");
+
+  try {
+    await t.sendMail({ from: `"HUMAI" <${process.env.GMAIL_USER}>`, to: managerEmail, subject, text });
+    return { sent: true };
+  } catch (err) {
+    console.error(`[notifyManagerEscalation] failed to send alert for task ${task.id}:`, err.message);
+    return { sent: false, reason: "send_failed", error: err.message };
+  }
+}

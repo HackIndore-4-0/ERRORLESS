@@ -1,7 +1,51 @@
 import express from "express";
 import { supabase } from "../supabase.js";
+import { computeSlaStatus } from "../services/slaTracker.js";
 
 const router = express.Router();
+
+// -----------------------------------------------------------------------
+// GET /api/dashboard/sla
+// Challenge 2: the "work status window" — every open human/hybrid task
+// with its live SLA countdown/progress, plus a recent feed of cascade
+// reassignments and emergency alerts pulled from the audit trail.
+// -----------------------------------------------------------------------
+router.get("/sla", async (req, res) => {
+  try {
+    const { data: tasks, error: taskErr } = await supabase
+      .from("tasks")
+      .select("*, employees:assigned_employee_id (id, name, role, email, current_load)")
+      .in("status", ["pending_approval", "in_progress"])
+      .not("sla_deadline", "is", null)
+      .order("sla_deadline", { ascending: true });
+
+    if (taskErr) throw taskErr;
+
+    const withStatus = (tasks || []).map((t) => ({ ...t, sla_status: computeSlaStatus(t) }));
+
+    const counts = withStatus.reduce(
+      (acc, t) => {
+        acc[t.sla_status.label] = (acc[t.sla_status.label] || 0) + 1;
+        return acc;
+      },
+      { on_track: 0, at_risk: 0, breached: 0, claimed: 0, claimed_overdue: 0 }
+    );
+
+    const { data: recentEvents, error: eventsErr } = await supabase
+      .from("audit_log")
+      .select("*")
+      .in("action", ["task_reassigned_sla_breach", "sla_emergency_alert"])
+      .order("ts", { ascending: false })
+      .limit(20);
+
+    if (eventsErr) throw eventsErr;
+
+    res.json({ success: true, counts, tasks: withStatus, recent_events: recentEvents || [] });
+  } catch (err) {
+    console.error("[dashboard/sla] error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // -----------------------------------------------------------------------
 // GET /api/dashboard/rework
