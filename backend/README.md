@@ -64,3 +64,10 @@ see an actual cascade happen end-to-end against your Supabase project:
 5. Railway assigns a public URL once deployed — check it with `GET /health`.
 6. Once your Vercel frontend has its own URL, update `APP_URL` here so
    assignment emails link to the right place.
+
+## Manager alerts (per-employee)
+Run `db/manager_schema.sql` in Supabase. Employees can have `manager_name` / `manager_email`.
+When the SLA cascade finds nobody under the 85% load ceiling, the alert goes to the stalled
+assignee's `manager_email`, falling back to the `MANAGER_EMAIL` env var.
+Note: some hosts (including Railway Free/Trial/Hobby) block outbound SMTP; if intake shows
+`send_failed`, use an HTTP email API instead.

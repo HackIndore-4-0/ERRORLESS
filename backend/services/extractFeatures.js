@@ -50,7 +50,7 @@ export async function extractTaskFeatures(title, description) {
   const client = getGroqClient();
 
   const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-120b",
+    model: "llama-3.3-70b-versatile",
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
@@ -97,7 +97,7 @@ export async function generateAiOutput(title, description, mode /* 'execute' | '
       : "Complete this task fully and directly. Produce the final output.";
 
   const response = await client.chat.completions.create({
-    model: "openai/gpt-oss-120b",
+    model: "llama-3.3-70b-versatile",
     messages: [
       { role: "system", content: instruction },
       {

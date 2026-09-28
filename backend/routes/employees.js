@@ -16,7 +16,7 @@ router.get("/", async (req, res) => {
 
 // POST /api/employees
 router.post("/", async (req, res) => {
-  const { name, role, email, skills, current_load } = req.body;
+  const { name, role, email, skills, current_load, manager_name, manager_email } = req.body;
 
   if (!name || !role || !email) {
     return res.status(400).json({ error: "name, role and email are required." });
@@ -31,6 +31,8 @@ router.post("/", async (req, res) => {
         email,
         skills: Array.isArray(skills) ? skills : [],
         current_load: typeof current_load === "number" ? current_load : 0.0,
+        manager_name: manager_name || null,
+        manager_email: manager_email || null,
       },
     ])
     .select()
@@ -43,7 +45,7 @@ router.post("/", async (req, res) => {
 // PATCH /api/employees/:id  (e.g. update current_load manually, or role/skills)
 router.patch("/:id", async (req, res) => {
   const { id } = req.params;
-  const allowed = ["name", "role", "email", "skills", "current_load"];
+  const allowed = ["name", "role", "email", "skills", "current_load", "manager_name", "manager_email"];
   const updates = Object.fromEntries(
     Object.entries(req.body).filter(([k]) => allowed.includes(k))
   );

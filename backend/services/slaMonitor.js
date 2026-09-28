@@ -83,7 +83,7 @@ async function handleBreach(task, sla, now) {
   const eligible = candidate && (candidate.current_load ?? 0) < LOAD_CEILING;
 
   if (!eligible) {
-    return escalate(task, sla);
+    return escalate(task, sla, (employees || []).find((e) => e.id === task.assigned_employee_id));
   }
 
   return cascade(task, candidate, employees || [], now);
@@ -166,7 +166,7 @@ async function cascade(task, newAssignee, employees, now) {
   };
 }
 
-async function escalate(task, sla) {
+async function escalate(task, sla, assignee = null) {
   if (task.escalated) {
     // Already alerted for this episode — don't spam, just note it happened.
     return { outcome: "already_escalated", taskId: task.id };
@@ -198,7 +198,8 @@ async function escalate(task, sla) {
 
   const notification = await notifyManagerEscalation(
     { ...task, load_ceiling: LOAD_CEILING },
-    reason
+    reason,
+    assignee
   );
 
   return { outcome: "escalated", taskId: task.id, reason, notification };
