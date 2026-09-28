@@ -281,6 +281,16 @@ router.patch("/:id/approve", async (req, res) => {
   try {
     const { id } = req.params;
     const { approver_id, decision, note, final_output } = req.body;
+    // approvals.approver_id is a uuid FK to employees. The frontend sends the
+    // signed-in user's email, so only store it in the column if it is a uuid;
+    // otherwise keep it in the note + audit actor instead of crashing (22P02).
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const approverUuid = UUID_RE.test(String(approver_id || "")) ? approver_id : null;
+    const approverLabel = approver_id || "manager";
+    const noteToStore =
+      approver_id && !approverUuid
+        ? `[by ${approver_id}]${note ? " " + note : ""}`
+        : note || null;
 
     if (!decision || !["approved", "rejected", "edited"].includes(decision)) {
       return res.status(400).json({ error: "decision must be one of approved | rejected | edited." });
@@ -322,9 +332,9 @@ router.patch("/:id/approve", async (req, res) => {
       .insert([
         {
           task_id: id,
-          approver_id: approver_id || null,
+          approver_id: approverUuid,
           decision,
-          note: note || null,
+          note: noteToStore,
           final_output: decision === "edited" ? final_output || null : null,
           drift_ratio: driftRatio,
           is_hidden_rework: isHiddenRework,
@@ -350,7 +360,7 @@ router.patch("/:id/approve", async (req, res) => {
     if (updateErr) throw updateErr;
 
     await logAudit({
-      actor: approver_id || "manager",
+      actor: approverLabel,
       action: "task_approved",
       entity: `task:${id}`,
       before: { status: task.status },

@@ -5,6 +5,31 @@ dotenv.config();
 
 let transporter = null;
 
+// Railway Free/Trial/Hobby block outbound SMTP, so prefer an HTTPS email API.
+// Set BREVO_API_KEY (+ EMAIL_FROM, a sender verified in Brevo) to use it.
+async function sendMail({ to, subject, text }) {
+  const { BREVO_API_KEY, EMAIL_FROM, GMAIL_USER } = process.env;
+  if (BREVO_API_KEY) {
+    const sender = EMAIL_FROM || GMAIL_USER;
+    if (!sender) throw new Error("EMAIL_FROM (verified Brevo sender) is not set");
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": BREVO_API_KEY, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ sender: { name: "HUMAI", email: sender }, to: [{ email: to }], subject, textContent: text }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`Brevo ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return;
+  }
+  const t = getTransporter();
+  if (!t) throw Object.assign(new Error("not_configured"), { code: "not_configured" });
+  await t.sendMail({ from: `"HUMAI" <${GMAIL_USER}>`, to, subject, text });
+}
+
+function emailConfigured() {
+  return !!(process.env.BREVO_API_KEY || (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD));
+}
+
 function getTransporter() {
   if (transporter) return transporter;
 
@@ -45,8 +70,7 @@ export async function notifyAssignee(employee, task, appUrl = process.env.APP_UR
     return { sent: false, reason: "no_employee_email" };
   }
 
-  const t = getTransporter();
-  if (!t) return { sent: false, reason: "not_configured" };
+  if (!emailConfigured()) return { sent: false, reason: "not_configured" };
 
   const link = appUrl ? `${appUrl.replace(/\/$/, "")}/tasks/${task.id}` : null;
 
@@ -64,13 +88,8 @@ export async function notifyAssignee(employee, task, appUrl = process.env.APP_UR
   ].join("\n");
 
   try {
-    await t.sendMail({
-      from: `"HUMAI" <${process.env.GMAIL_USER}>`,
-      to: employee.email,
-      subject,
-      text,
-    });
-    return { sent: true };
+    await sendMail({ to: employee.email, subject, text });
+    return { sent: true, to: employee.email };
   } catch (err) {
     console.error(`[notifyAssignee] failed to send email for task ${task.id}:`, err.message);
     return { sent: false, reason: "send_failed", error: err.message };
@@ -92,8 +111,7 @@ export async function notifyManagerEscalation(task, reason, assignee = null) {
     return { sent: false, reason: "no_manager_email" };
   }
 
-  const t = getTransporter();
-  if (!t) return { sent: false, reason: "not_configured" };
+  if (!emailConfigured()) return { sent: false, reason: "not_configured" };
 
   const subject = `HUMAI ALERT: SLA breach, no capacity — "${task.title || "Untitled task"}"`;
   const text = [
@@ -113,7 +131,7 @@ export async function notifyManagerEscalation(task, reason, assignee = null) {
   ].join("\n");
 
   try {
-    await t.sendMail({ from: `"HUMAI" <${process.env.GMAIL_USER}>`, to: managerEmail, subject, text });
+    await sendMail({ to: managerEmail, subject, text });
     return { sent: true, to: managerEmail };
   } catch (err) {
     console.error(`[notifyManagerEscalation] failed to send alert for task ${task.id}:`, err.message);
