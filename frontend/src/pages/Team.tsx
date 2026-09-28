@@ -251,6 +251,8 @@ function AddEmployeeModal({
   const [email, setEmail] = useState("");
   const [skills, setSkills] = useState("");
   const [department, setDepartment] = useState("");
+  const [managerName, setManagerName] = useState("");
+  const [managerEmail, setManagerEmail] = useState("");
 
   const reset = () => {
     setName("");
@@ -258,6 +260,8 @@ function AddEmployeeModal({
     setEmail("");
     setSkills("");
     setDepartment("");
+    setManagerName("");
+    setManagerEmail("");
   };
 
   return (
@@ -279,11 +283,13 @@ function AddEmployeeModal({
                 email: email.trim(),
                 skills: skills.trim().split(/[,;]/).map((s) => s.trim()).filter(Boolean),
                 department: department.trim(),
+                manager_name: managerName.trim() || undefined,
+                manager_email: managerEmail.trim() || undefined,
                 workload: 0,
               });
               reset();
             }}
-            disabled={busy || !name.trim()}
+            disabled={busy || !name.trim() || !role.trim() || !email.trim()}
             className="btn-primary text-sm"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add member"}
@@ -319,6 +325,16 @@ function AddEmployeeModal({
           <div>
             <label className="label">Skills (comma-separated)</label>
             <input className="input" value={skills} onChange={(e) => setSkills(e.target.value)} />
+          </div>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Manager name</label>
+            <input className="input" value={managerName} onChange={(e) => setManagerName(e.target.value)} />
+          </div>
+          <div>
+            <label className="label">Manager email</label>
+            <input className="input" type="email" value={managerEmail} onChange={(e) => setManagerEmail(e.target.value)} />
           </div>
         </div>
         {error && <p className="text-xs text-red-600">{error}</p>}

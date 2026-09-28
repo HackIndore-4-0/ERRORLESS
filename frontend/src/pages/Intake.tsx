@@ -28,7 +28,7 @@ export function Intake({ profile }: { profile: Profile }) {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || loading) return;
+    if (!title.trim() || !description.trim() || loading) return;
     setLoading(true);
     setError("");
     setResult(null);
@@ -179,6 +179,16 @@ function ResultPanel({
           />
           <Field label="Assigned To" value={assigned || "—"} icon={<UserCheck className="h-3.5 w-3.5" />} />
           <Field label="SLA" value={`${num(result.sla_minutes ?? result.task?.sla_minutes)} min`} icon={<Clock className="h-3.5 w-3.5" />} />
+          {assigned && result.notification && (
+            <Field
+              label="Email"
+              value={
+                result.notification.sent
+                  ? `Email sent${result.assigned_email ? ` to ${result.assigned_email}` : ""}`
+                  : `Email not sent (${str(result.notification.reason, "unknown")})`
+              }
+            />
+          )}
         </div>
 
         <div>

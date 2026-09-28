@@ -9,6 +9,8 @@ export interface Employee {
   name: string;
   role?: string;
   email?: string;
+  manager_name?: string;
+  manager_email?: string;
   skills?: string[] | string;
   department?: string;
   load?: number;
@@ -149,6 +151,8 @@ export interface IntakeResult {
   sla_minutes?: number | string;
   sla_deadline?: string;
   reason?: string;
+  assigned_email?: string;
+  notification?: { sent: boolean; reason?: string; error?: string; to?: string };
   [key: string]: unknown;
 }
 
